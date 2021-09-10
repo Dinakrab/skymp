@@ -6,6 +6,7 @@
 
 #include <cef/ui/DX11RenderHandler.hpp>
 #include <cef/ui/MyRenderHandler.hpp>
+#include <cef/ui/DX11TextRenderHandler.hpp>
 
 #include "TPRenderSystemD3D11.h"
 
@@ -21,7 +22,10 @@ struct D3D11RenderProvider final
   {
   }
 
-  MyRenderHandler* Create() override { return new DX11RenderHandler(this); }
+  MyRenderHandler* Create() override
+  {
+    return new CEFUtils::DX11TextRenderHandler(this);
+  }
 
   [[nodiscard]] HWND GetWindow() override
   {
