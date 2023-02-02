@@ -18,11 +18,38 @@ void BaseActorValues::VisitBaseActorValues(BaseActorValues& baseActorValues,
   visitor("magickaRateMult",
           std::to_string(baseActorValues.magickaRateMult).c_str());
   visitor("healthPercentage",
-          std::to_string(changeForm.healthPercentage).c_str());
+          std::to_string(changeForm.actorValues.healthPercentage).c_str());
   visitor("staminaPercentage",
-          std::to_string(changeForm.staminaPercentage).c_str());
+          std::to_string(changeForm.actorValues.staminaPercentage).c_str());
   visitor("magickaPercentage",
-          std::to_string(changeForm.magickaPercentage).c_str());
+          std::to_string(changeForm.actorValues.magickaPercentage).c_str());
+}
+
+float BaseActorValues::GetValue(espm::ActorValue av)
+{
+  switch (av) {
+    case espm::ActorValue::Health:
+      return health;
+    case espm::ActorValue::Magicka:
+      return magicka;
+    case espm::ActorValue::Stamina:
+      return stamina;
+    case espm::ActorValue::HealRate:
+      return healRate;
+    case espm::ActorValue::MagickaRate:
+      return magickaRate;
+    case espm::ActorValue::StaminaRate:
+      return staminaRate;
+    case espm::ActorValue::HealRateMult_or_CombatHealthRegenMultMod:
+      return healRateMult;
+    case espm::ActorValue::MagickaRateMult_or_CombatHealthRegenMultPowerMod:
+      return magickaRateMult;
+    case espm::ActorValue::StaminaRateMult:
+      return staminaRateMult;
+    default:
+      throw std::runtime_error(
+        fmt::format("Unsupported actor value type {:}", (int32_t)av));
+  }
 }
 
 BaseActorValues GetBaseActorValues(WorldState* worldState, uint32_t baseId,
@@ -31,11 +58,12 @@ BaseActorValues GetBaseActorValues(WorldState* worldState, uint32_t baseId,
   auto npcData = espm::GetData<espm::NPC_>(baseId, worldState);
   uint32_t raceID = raceIdOverride ? raceIdOverride : npcData.race;
   auto raceData = espm::GetData<espm::RACE>(raceID, worldState);
-
-  return { raceData.startingHealth + npcData.healthOffset,
-           raceData.startingMagicka + npcData.magickaOffset,
-           raceData.startingStamina + npcData.staminaOffset,
-           raceData.healRegen,
-           raceData.magickaRegen,
-           raceData.staminaRegen };
+  BaseActorValues actorValues;
+  actorValues.health = raceData.startingHealth + npcData.healthOffset;
+  actorValues.magicka = raceData.startingMagicka + npcData.magickaOffset;
+  actorValues.stamina = raceData.startingStamina + npcData.staminaOffset;
+  actorValues.healRate = raceData.healRegen;
+  actorValues.magickaRate = raceData.magickaRegen;
+  actorValues.staminaRate = raceData.staminaRegen;
+  return actorValues;
 }

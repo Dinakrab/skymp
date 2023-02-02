@@ -2,27 +2,27 @@
   "name": "skymp5-server",
   "version": "0.0.0",
   "description": "",
+  "license": "AGPL-3.0",
   "scripts": {
     "build-ts": "parcel build ts/index.ts --bundle-node-modules --out-dir ../build/dist/server/dist_back --out-file skymp5-server.js --no-cache --target node",
-    "cmake-js-fetch": "cmake-js configure --directory cmake-js-fetch --out cmake-js-fetch-build",
-    "cmake-js-fetch-msvc": "cmake-js configure -G \"Visual Studio 16 2019\" --directory cmake-js-fetch --out cmake-js-fetch-build"
+    "cmake-js-fetch": "cmake-js configure --directory cmake-js-fetch --out ../build/cmake-js-fetch-build"
   },
   "author": "Leonid Pospelov <pospelovlm@yandex.ru>",
   "dependencies": {
     "argparse": "^2.0.1",
-    "axios": "^0.24.0",
-    "chokidar": "^3.5.2",
+    "axios": "^0.26.1",
+    "chokidar": "^3.5.3",
     "cmake-js": "^6.3.0",
-    "crc-32": "^1.2.0",
+    "crc-32": "^1.2.2",
     "koa": "^2.13.4",
     "koa-proxy": "^1.0.0-alpha.3",
     "koa-router": "^10.1.1",
     "koa-static": "^5.0.0",
     "parcel-bundler": "^1.12.5",
     "source-map-support": "^0.5.21",
-    "ws": "^8.4.0"
+    "ws": "^8.5.0"
   },
   "devDependencies": {
-    "typescript": "^4.5.4"
+    "typescript": "^4.6.3"
   }
 }

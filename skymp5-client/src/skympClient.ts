@@ -8,34 +8,33 @@ import {
   Ui,
   Utility,
   Actor,
+  ObjectReference,
 } from "skyrimPlatform";
-import {
-  WorldView,
-  getViewFromStorage,
-  localIdToRemoteId,
-  remoteIdToLocalId,
-} from "./view";
-import { getMovement } from "./movement";
-import { getAppearance } from "./appearance";
-import { AnimationSource, Animation, setupHooks } from "./animation";
-import { getEquipment } from "./equipment";
-import { getDiff, getInventory, Inventory } from "./inventory";
+import { getMovement } from "./sync/movement";
+import { getAppearance } from "./sync/appearance";
+import { AnimationSource, Animation, setupHooks } from "./sync/animation";
+import { getEquipment } from "./sync/equipment";
+import { getDiff, getInventory, hasExtras, Inventory, removeSimpleItemsAsManyAsPossible, sumInventories } from "./sync/inventory";
 import { MsgType, HostStartMessage, HostStopMessage } from "./messages";
-import { MsgHandler } from "./msgHandler";
-import { ModelSource } from "./modelSource";
-import { RemoteServer, getPcInventory } from "./remoteServer";
-import { SendTarget } from "./sendTarget";
+import { MsgHandler } from "./modelSource/msgHandler";
+import { ModelSource } from "./modelSource/modelSource";
+import { RemoteServer, getPcInventory } from "./modelSource/remoteServer";
+import { SendTarget } from "./modelSource/sendTarget";
 import * as networking from "./networking";
 import * as sp from "skyrimPlatform";
-import * as loadGameManager from "./loadGameManager";
-import * as deathSystem from "./deathSystem";
-import { setUpConsoleCommands } from "./console";
-import { nextHostAttempt } from "./hostAttempts";
-import * as updateOwner from "./updateOwner";
-import { ActorValues, getActorValues } from "./actorvalues";
-import { Hit, getHitData } from "./hit";
-import { FormModel } from "./model";
-import { nameof } from "./utils";
+import * as loadGameManager from "./features/loadGameManager";
+import * as deathSystem from "./sync/deathSystem";
+import { setUpConsoleCommands } from "./features/console";
+import { nextHostAttempt } from "./view/hostAttempts";
+import * as updateOwner from "./gamemodeApi/updateOwner";
+import { ActorValues, getActorValues } from "./sync/actorvalues";
+import { getHitData } from "./sync/hit";
+import { FormModel } from "./modelSource/model";
+import * as netInfo from "./debug/netInfoSystem";
+import { WorldView } from "./view/worldView";
+import { getViewFromStorage, localIdToRemoteId, remoteIdToLocalId } from "./view/worldViewMisc";
+import { getScreenResolution } from "./view/formView";
+import * as taffyPerkSystem from "./sweetpie/taffyPerkSystem";
 
 interface AnyMessage {
   type?: string;
@@ -48,13 +47,6 @@ const handleMessage = (msgAny: AnyMessage, handler_: MsgHandler) => {
     (m: AnyMessage) => void
   >;
   const f = handler[msgType];
-  /*if (msgType !== "UpdateMovement") {
-    printConsole();
-    for (const key in msgAny) {
-      const v = (msgAny as Record<string, any>)[key];
-      printConsole(`${key}=${JSON.stringify(v)}`);
-    }
-  }*/
 
   if (msgType === "hostStart") {
     const msg = msgAny as HostStartMessage;
@@ -93,6 +85,14 @@ printConsole("settings:", settings["skymp5-client"]);
 const targetIp = settings["skymp5-client"]["server-ip"] as string;
 const targetPort = settings["skymp5-client"]["server-port"] as number;
 
+export const getServerIp = () => {
+  return targetIp;
+};
+
+export const getServerUiPort = () => {
+  return targetPort === 7777 ? 3000 : (targetPort as number) + 1;
+};
+
 export const connectWhenICallAndNotWhenIImport = (): void => {
   if (storage.targetIp !== targetIp || storage.targetPort !== targetPort) {
     storage.targetIp = targetIp;
@@ -103,7 +103,7 @@ export const connectWhenICallAndNotWhenIImport = (): void => {
   } else {
     printConsole("Reconnect is not required");
   }
-}
+};
 
 export class SkympClient {
   constructor() {
@@ -131,6 +131,7 @@ export class SkympClient {
     });
 
     networking.on("message", (msgAny: Record<string, unknown> | string) => {
+      netInfo.NetInfo.addReceivedPacketCount(1);
       handleMessage(
         msgAny as Record<string, unknown>,
         this.msgHandler as MsgHandler
@@ -143,7 +144,7 @@ export class SkympClient {
       }
     });
 
-    let lastInv: Inventory;
+    let lastInv: Inventory | undefined;
 
     once("update", () => {
       const send = (msg: Record<string, unknown>) => {
@@ -246,10 +247,11 @@ export class SkympClient {
           e.oldContainer.getFormID() === 0x14 ||
           e.newContainer.getFormID() === 0x14
         ) {
-          printConsole(1);
+          if (e.newContainer.getFormID() === 0x14 && e.numItems > 0) {
+            taffyPerkSystem.inventoryChanged(e.newContainer, { baseId: e.baseObj.getFormID(), count: e.numItems });
+          }
           if (!lastInv) lastInv = getPcInventory();
           if (lastInv) {
-            printConsole(2);
             const newInv = getInventory(Game.getPlayer() as Actor);
 
             // It seems that 'ignoreWorn = false' fixes this:
@@ -263,20 +265,62 @@ export class SkympClient {
             for (let i = 0; i < diff.entries.length; ++i) {
               printConsole(`[${i}] ${JSON.stringify(diff.entries[i])}`);
             }
-            const msgs = diff.entries.map((entry) => {
-              if (entry.count !== 0) {
-                const msg = JSON.parse(JSON.stringify(entry));
-                delete msg["name"]; // Extra name works too strange
-                msg["t"] = entry.count > 0 ? MsgType.PutItem : MsgType.TakeItem;
-                msg["count"] = Math.abs(msg["count"]);
-                msg["target"] =
-                  e.oldContainer.getFormID() === 0x14
-                    ? e.newContainer.getFormID()
-                    : e.oldContainer.getFormID();
-                return msg;
+            const msgs = diff.entries
+              .filter(entry => entry.count > 0 ? taffyPerkSystem.canDropOrPutItem(entry.baseId) : true)
+              .map((entry) => {
+                if (entry.count !== 0) {
+                  const msg = JSON.parse(JSON.stringify(entry));
+                  delete msg["name"]; // Extra name works too strange
+                  msg["t"] = entry.count > 0 ? MsgType.PutItem : MsgType.TakeItem;
+                  msg["count"] = Math.abs(msg["count"]);
+                  msg["target"] =
+                    e.oldContainer.getFormID() === 0x14
+                      ? e.newContainer.getFormID()
+                      : e.oldContainer.getFormID();
+                  return msg;
+                }
+              });
+            msgs.forEach((msg) => this.sendTarget.send(msg, true));
+
+            // Prevent emitting 1,2,3,4,5 changes when taking/putting 5 potions one by one
+            // This code makes it 1,1,1,1,1 but works only for extra-less items
+            // At the moment of writing this I think it's not needed for items with extras
+            diff.entries.forEach((entry) => {
+              if (lastInv && !hasExtras(entry)) {
+                const put = entry.count > 0;
+                const take = entry.count < 0;
+                if (put) {
+                  lastInv = removeSimpleItemsAsManyAsPossible(lastInv, entry.baseId, entry.count);
+                } else if (take) {
+                  const add = { entries: [entry] };
+                  add.entries[0].count *= -1;
+                  lastInv = sumInventories(lastInv, add);
+                }
               }
             });
-            msgs.forEach((msg) => this.sendTarget.send(msg, true));
+          }
+        }
+      }
+    });
+
+    on("containerChanged", (e) => {
+      const pl = Game.getPlayer() as Actor;
+      const isPlayer: boolean = pl && e.oldContainer && (pl.getFormID() === e.oldContainer.getFormID());
+      const noContainer: boolean = e.newContainer === null || e.newContainer === undefined;
+      const isReference: boolean = e.reference !== null;
+      if (e.newContainer && e.newContainer.getFormID() === pl.getFormID()) return;
+      if (isPlayer && isReference && noContainer && taffyPerkSystem.canDropOrPutItem(e.baseObj.getFormID())) {
+        const radius: number = 200;
+        const baseId: number = e.baseObj.getFormID();
+        const refrId = Game.findClosestReferenceOfType(e.baseObj, pl.getPositionX(), pl.getPositionY(), pl.getPositionZ(), radius)?.getFormID();
+        if (refrId) {
+          const refr = ObjectReference.from(Game.getFormEx(refrId));
+          if (refr) {
+            refr.delete().then(() => {
+              const t = MsgType.DropItem;
+              const count = 1;
+              this.sendTarget.send({ t, baseId, count }, true);
+            });
           }
         }
       }
@@ -388,19 +432,6 @@ export class SkympClient {
           { t: MsgType.UpdateAnimation, data: anim, _refrId },
           false
         );
-        if (
-          (storage as Record<string, any>)._api_onAnimationEvent &&
-          (storage as Record<string, any>)._api_onAnimationEvent.callback
-        ) {
-          try {
-            (storage as Record<string, any>)._api_onAnimationEvent.callback(
-              _refrId ? _refrId : 0x14,
-              anim.animEventName
-            );
-          } catch (e) {
-            printConsole("'_api_onAnimationEvent' -", e);
-          }
-        }
       }
     }
   }
@@ -585,6 +616,6 @@ export class SkympClient {
 }
 
 once("update", () => {
-  // Is it racing with OnInit in Papyrus?
+  // TODO: It is racing with OnInit in Papyrus, fix it
   (sp.TESModPlatform as any).blockPapyrusEvents(true);
 });

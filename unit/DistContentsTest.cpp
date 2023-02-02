@@ -1,5 +1,5 @@
 #include "TestUtils.hpp"
-#include <catch2/catch.hpp>
+#include <catch2/catch_all.hpp>
 
 namespace {
 size_t PrintMissing(const std::set<std::filesystem::path>& whatIsMissing,
@@ -50,6 +50,12 @@ auto GetExpectedPaths(const nlohmann::json& j)
   configurationTags.insert("Unix");
 #endif
 
+#ifdef SKYRIM_SE
+  configurationTags.insert("SkyrimSE");
+#else
+  configurationTags.insert("SkyrimAE");
+#endif
+
   for (auto& entry : j) {
     if (IsSubsetOf(entry["configurationTags"], configurationTags)) {
       for (auto& file : entry["expectedFiles"]) {
@@ -91,7 +97,7 @@ TEST_CASE("Distribution folder must contain all requested files",
   std::vector<std::filesystem::path> distContentsIgnore = {
     "server/data/Dawnguard.esm",   "server/data/Dragonborn.esm",
     "server/data/HearthFires.esm", "server/data/Skyrim.esm",
-    "server/data/Update.esm",      "server/scamp_native.ilk"
+    "server/data/Update.esm",      "server/scam_native.ilk"
   };
   for (auto& path : distContentsIgnore) {
     expectedPaths.erase(path);
@@ -107,7 +113,9 @@ TEST_CASE("Distribution folder must contain all requested files",
     std::stringstream err;
     err << "Unexpected contents of '" << DIST_DIR << "', see diff"
         << std::endl;
-    err << ss.str() << std::endl;
+    err << ss.str()
+        << "Update unit/DistContentsExpected.json if it was expected to change"
+        << std::endl;
     err << std::endl;
     throw std::runtime_error(err.str());
   }

@@ -31,10 +31,27 @@ std::string MpObjectReference::CreatePropertyMessage(
 nlohmann::json MpObjectReference::PreparePropertyMessage(
   MpObjectReference* self, const char* name, const nlohmann::json& value)
 {
-  return nlohmann::json{ { "idx", self->GetIdx() },
-                         { "t", MsgType::UpdateProperty },
-                         { "propName", name },
-                         { "data", value } };
+  std::string baseRecordType;
+
+  auto& loader = self->GetParent()->GetEspm();
+  auto base = loader.GetBrowser().LookupById(GetBaseId());
+  if (base.rec) {
+    baseRecordType = base.rec->GetType().ToString();
+  }
+
+  auto object = nlohmann::json{ { "idx", self->GetIdx() },
+                                { "t", MsgType::UpdateProperty },
+                                { "propName", name },
+                                { "refrId", self->GetFormId() },
+                                { "data", value } };
+
+  // See 'perf: improve game framerate #1186'
+  // Client needs to know if it is DOOR or not
+  if (baseRecordType == "DOOR") {
+    object["baseRecordType"] = baseRecordType;
+  }
+
+  return object;
 }
 
 class OccupantDestroyEventSink : public MpActor::DestroyEventSink
@@ -92,14 +109,9 @@ struct PrimitiveData
   GeoProc::GeoPolygonProc polygonProc;
 };
 
-struct MpObjectReference::Impl : public ChangeFormGuard<MpChangeFormREFR>
+struct MpObjectReference::Impl
 {
 public:
-  Impl(MpChangeFormREFR changeForm_, MpObjectReference* self_)
-    : ChangeFormGuard(changeForm_, self_)
-  {
-  }
-
   bool onInitEventSent = false;
   bool scriptsInited = false;
   std::unique_ptr<ScriptState> scriptState;
@@ -110,11 +122,18 @@ public:
 };
 
 namespace {
-auto Mode(bool isLocationSaveNeeded)
+auto MakeMode(bool isLocationSaveNeeded)
 {
-  return isLocationSaveNeeded
-    ? ChangeFormGuard<MpChangeFormREFR>::Mode::RequestSave
-    : ChangeFormGuard<MpChangeFormREFR>::Mode::NoRequestSave;
+  return isLocationSaveNeeded ? ChangeFormGuard::Mode::RequestSave
+                              : ChangeFormGuard::Mode::NoRequestSave;
+}
+MpChangeForm MakeChangeForm(const LocationalData& locationalData)
+{
+  MpChangeForm changeForm;
+  changeForm.position = locationalData.pos;
+  changeForm.angle = locationalData.rot;
+  changeForm.worldOrCellDesc = locationalData.cellOrWorldDesc;
+  return changeForm;
 }
 }
 
@@ -125,12 +144,9 @@ MpObjectReference::MpObjectReference(
   : callbacks(new FormCallbacks(callbacks_))
   , baseId(baseId_)
   , baseType(baseType_)
+  , ChangeFormGuard(MakeChangeForm(locationalData_), this)
 {
-  MpChangeFormREFR changeForm;
-  changeForm.position = locationalData_.pos;
-  changeForm.angle = locationalData_.rot;
-  changeForm.worldOrCellDesc = locationalData_.cellOrWorldDesc;
-  pImpl.reset(new Impl{ changeForm, this });
+  pImpl.reset(new Impl);
 
   if (primitiveBoundsDiv2)
     SetPrimitive(*primitiveBoundsDiv2);
@@ -138,17 +154,17 @@ MpObjectReference::MpObjectReference(
 
 const NiPoint3& MpObjectReference::GetPos() const
 {
-  return pImpl->ChangeForm().position;
+  return ChangeForm().position;
 }
 
 const NiPoint3& MpObjectReference::GetAngle() const
 {
-  return pImpl->ChangeForm().angle;
+  return ChangeForm().angle;
 }
 
 const FormDesc& MpObjectReference::GetCellOrWorld() const
 {
-  return pImpl->ChangeForm().worldOrCellDesc;
+  return ChangeForm().worldOrCellDesc;
 }
 
 const uint32_t& MpObjectReference::GetBaseId() const
@@ -156,24 +172,29 @@ const uint32_t& MpObjectReference::GetBaseId() const
   return baseId;
 }
 
+const std::string& MpObjectReference::GetBaseType() const
+{
+  return baseType;
+}
+
 const Inventory& MpObjectReference::GetInventory() const
 {
-  return pImpl->ChangeForm().inv;
+  return ChangeForm().inv;
 }
 
 const bool& MpObjectReference::IsHarvested() const
 {
-  return pImpl->ChangeForm().isHarvested;
+  return ChangeForm().isHarvested;
 }
 
 const bool& MpObjectReference::IsOpen() const
 {
-  return pImpl->ChangeForm().isOpen;
+  return ChangeForm().isOpen;
 }
 
 const bool& MpObjectReference::IsDisabled() const
 {
-  return pImpl->ChangeForm().isDisabled;
+  return ChangeForm().isDisabled;
 }
 
 std::chrono::system_clock::duration MpObjectReference::GetRelootTime() const
@@ -252,7 +273,7 @@ void MpObjectReference::VisitProperties(const PropertiesVisitor& visitor,
 
   // Property flags (isVisibleByOwner, isVisibleByNeighbor) should be checked
   // by a visitor
-  auto& dynamicFields = pImpl->ChangeForm().dynamicFields.GetAsJson();
+  auto& dynamicFields = ChangeForm().dynamicFields.GetAsJson();
   for (auto it = dynamicFields.begin(); it != dynamicFields.end(); ++it) {
     std::string dump = it.value().dump();
     visitor(it.key().data(), dump.data());
@@ -268,18 +289,20 @@ void MpObjectReference::Activate(MpObjectReference& activationSource,
       (!activationBlocked || defaultProcessingOnly))
     ProcessActivate(activationSource);
 
-  auto arg = activationSource.ToVarValue();
-  SendPapyrusEvent("OnActivate", &arg, 1);
+  if (!defaultProcessingOnly) {
+    auto arg = activationSource.ToVarValue();
+    SendPapyrusEvent("OnActivate", &arg, 1);
+  }
 }
 
 void MpObjectReference::SetPos(const NiPoint3& newPos)
 {
-  auto oldGridPos = GetGridPos(pImpl->ChangeForm().position);
+  auto oldGridPos = GetGridPos(ChangeForm().position);
   auto newGridPos = GetGridPos(newPos);
 
-  pImpl->EditChangeForm(
+  EditChangeForm(
     [&newPos](MpChangeFormREFR& changeForm) { changeForm.position = newPos; },
-    Mode(IsLocationSavingNeeded()));
+    MakeMode(IsLocationSavingNeeded()));
 
   if (oldGridPos != newGridPos || !everSubscribedOrListened)
     ForceSubscriptionsUpdate();
@@ -354,15 +377,15 @@ void MpObjectReference::SetPos(const NiPoint3& newPos)
 
 void MpObjectReference::SetAngle(const NiPoint3& newAngle)
 {
-  pImpl->EditChangeForm(
+  EditChangeForm(
     [&](MpChangeFormREFR& changeForm) { changeForm.angle = newAngle; },
-    Mode(IsLocationSavingNeeded()));
+    MakeMode(IsLocationSavingNeeded()));
 }
 
 void MpObjectReference::SetHarvested(bool harvested)
 {
-  if (harvested != pImpl->ChangeForm().isHarvested) {
-    pImpl->EditChangeForm([&](MpChangeFormREFR& changeForm) {
+  if (harvested != ChangeForm().isHarvested) {
+    EditChangeForm([&](MpChangeFormREFR& changeForm) {
       changeForm.isHarvested = harvested;
     });
     SendPropertyToListeners("isHarvested", harvested);
@@ -371,8 +394,8 @@ void MpObjectReference::SetHarvested(bool harvested)
 
 void MpObjectReference::SetOpen(bool open)
 {
-  if (open != pImpl->ChangeForm().isOpen) {
-    pImpl->EditChangeForm(
+  if (open != ChangeForm().isOpen) {
+    EditChangeForm(
       [&](MpChangeFormREFR& changeForm) { changeForm.isOpen = open; });
     SendPropertyToListeners("isOpen", open);
   }
@@ -425,20 +448,20 @@ void MpObjectReference::SetCellOrWorld(const FormDesc& newWorldOrCell)
 
 void MpObjectReference::Disable()
 {
-  if (pImpl->ChangeForm().isDisabled)
+  if (ChangeForm().isDisabled)
     return;
 
-  pImpl->EditChangeForm(
+  EditChangeForm(
     [&](MpChangeFormREFR& changeForm) { changeForm.isDisabled = true; });
   RemoveFromGrid();
 }
 
 void MpObjectReference::Enable()
 {
-  if (!pImpl->ChangeForm().isDisabled)
+  if (!ChangeForm().isDisabled)
     return;
 
-  pImpl->EditChangeForm(
+  EditChangeForm(
     [&](MpChangeFormREFR& changeForm) { changeForm.isDisabled = false; });
   ForceSubscriptionsUpdate();
 }
@@ -520,7 +543,7 @@ void MpObjectReference::SetProperty(const std::string& propertyName,
                                     bool isVisibleByOwner,
                                     bool isVisibleByNeighbor)
 {
-  pImpl->EditChangeForm([&](MpChangeFormREFR& changeForm) {
+  EditChangeForm([&](MpChangeFormREFR& changeForm) {
     changeForm.dynamicFields.Set(propertyName, newValueChakra);
   });
   if (isVisibleByNeighbor) {
@@ -541,12 +564,12 @@ void MpObjectReference::SetTeleportFlag(bool value)
 void MpObjectReference::SetPosAndAngleSilent(const NiPoint3& pos,
                                              const NiPoint3& rot)
 {
-  pImpl->EditChangeForm(
+  EditChangeForm(
     [&](MpChangeFormREFR& changeForm) {
       changeForm.position = pos;
       changeForm.angle = rot;
     },
-    Impl::Mode::NoRequestSave);
+    Mode::NoRequestSave);
 }
 
 void MpObjectReference::SetAnimationVariableBool(const char* name, bool value)
@@ -561,7 +584,7 @@ void MpObjectReference::SetAnimationVariableBool(const char* name, bool value)
 
 void MpObjectReference::SetInventory(const Inventory& inv)
 {
-  pImpl->EditChangeForm([&](MpChangeFormREFR& changeForm) {
+  EditChangeForm([&](MpChangeFormREFR& changeForm) {
     changeForm.baseContainerAdded = true;
     changeForm.inv = inv;
   });
@@ -570,21 +593,37 @@ void MpObjectReference::SetInventory(const Inventory& inv)
 
 void MpObjectReference::AddItem(uint32_t baseId, uint32_t count)
 {
-  pImpl->EditChangeForm([&](MpChangeFormREFR& changeForm) {
+  EditChangeForm([&](MpChangeFormREFR& changeForm) {
     changeForm.baseContainerAdded = true;
     changeForm.inv.AddItem(baseId, count);
   });
   SendInventoryUpdate();
+
+  auto baseItem = VarValue(static_cast<int32_t>(baseId));
+  auto itemCount = VarValue(static_cast<int32_t>(count));
+  auto itemReference = VarValue((IGameObject*)nullptr);
+  auto sourceContainer = VarValue((IGameObject*)nullptr);
+  VarValue args[4] = { baseItem, itemCount, itemReference, sourceContainer };
+  SendPapyrusEvent("OnItemAdded", args, 4);
 }
 
 void MpObjectReference::AddItems(const std::vector<Inventory::Entry>& entries)
 {
   if (entries.size() > 0) {
-    pImpl->EditChangeForm([&](MpChangeFormREFR& changeForm) {
+    EditChangeForm([&](MpChangeFormREFR& changeForm) {
       changeForm.baseContainerAdded = true;
       changeForm.inv.AddItems(entries);
     });
     SendInventoryUpdate();
+  }
+
+  for (const auto& entri : entries) {
+    auto baseItem = VarValue(static_cast<int32_t>(entri.baseId));
+    auto itemCount = VarValue(static_cast<int32_t>(entri.count));
+    auto itemReference = VarValue((IGameObject*)nullptr);
+    auto sourceContainer = VarValue((IGameObject*)nullptr);
+    VarValue args[4] = { baseItem, itemCount, itemReference, sourceContainer };
+    SendPapyrusEvent("OnItemAdded", args, 4);
   }
 }
 
@@ -597,7 +636,7 @@ void MpObjectReference::RemoveItem(uint32_t baseId, uint32_t count,
 void MpObjectReference::RemoveItems(
   const std::vector<Inventory::Entry>& entries, MpObjectReference* target)
 {
-  pImpl->EditChangeForm([&](MpChangeFormREFR& changeForm) {
+  EditChangeForm([&](MpChangeFormREFR& changeForm) {
     changeForm.inv.RemoveItems(entries);
   });
 
@@ -615,11 +654,11 @@ void MpObjectReference::RemoveAllItems(MpObjectReference* target)
 
 void MpObjectReference::RelootContainer()
 {
-  pImpl->EditChangeForm(
+  EditChangeForm(
     [&](MpChangeFormREFR& changeForm) {
       changeForm.baseContainerAdded = false;
     },
-    Impl::Mode::NoRequestSave);
+    Mode::NoRequestSave);
   EnsureBaseContainerAdded(*GetParent()->espm);
 }
 
@@ -628,10 +667,10 @@ void MpObjectReference::RegisterProfileId(int32_t profileId)
   if (profileId < 0)
     throw std::runtime_error("Invalid profileId passed to RegisterProfileId");
 
-  if (pImpl->ChangeForm().profileId >= 0)
+  if (ChangeForm().profileId >= 0)
     throw std::runtime_error("Already has a valid profileId");
 
-  pImpl->EditChangeForm(
+  EditChangeForm(
     [&](MpChangeFormREFR& changeForm) { changeForm.profileId = profileId; });
   GetParent()->actorIdByProfileId[profileId].insert(GetFormId());
 }
@@ -706,8 +745,8 @@ void MpObjectReference::RequestReloot(
   if (!time)
     time = GetRelootTime();
 
-  if (!pImpl->ChangeForm().nextRelootDatetime) {
-    pImpl->EditChangeForm([&](MpChangeFormREFR& changeForm) {
+  if (!ChangeForm().nextRelootDatetime) {
+    EditChangeForm([&](MpChangeFormREFR& changeForm) {
       changeForm.nextRelootDatetime = std::chrono::system_clock::to_time_t(
         std::chrono::system_clock::now() + GetRelootTime());
     });
@@ -718,8 +757,8 @@ void MpObjectReference::RequestReloot(
 
 void MpObjectReference::DoReloot()
 {
-  if (pImpl->ChangeForm().nextRelootDatetime) {
-    pImpl->EditChangeForm([&](MpChangeFormREFR& changeForm) {
+  if (ChangeForm().nextRelootDatetime) {
+    EditChangeForm([&](MpChangeFormREFR& changeForm) {
       changeForm.nextRelootDatetime = 0;
     });
     SetOpen(false);
@@ -732,23 +771,24 @@ std::shared_ptr<std::chrono::time_point<std::chrono::system_clock>>
 MpObjectReference::GetNextRelootMoment() const
 {
   std::shared_ptr<std::chrono::time_point<std::chrono::system_clock>> res;
-  if (pImpl->ChangeForm().nextRelootDatetime)
+  if (ChangeForm().nextRelootDatetime)
     res.reset(new std::chrono::time_point<std::chrono::system_clock>(
       std::chrono::system_clock::from_time_t(
-        pImpl->ChangeForm().nextRelootDatetime)));
+        ChangeForm().nextRelootDatetime)));
   return res;
 }
 
 MpChangeForm MpObjectReference::GetChangeForm() const
 {
   MpChangeForm res;
-  static_cast<MpChangeFormREFR&>(res) = pImpl->ChangeForm();
+  static_cast<MpChangeFormREFR&>(res) = ChangeForm();
 
   if (GetParent() && !GetParent()->espmFiles.empty()) {
     res.formDesc = FormDesc::FromFormId(GetFormId(), GetParent()->espmFiles);
     res.baseDesc = FormDesc::FromFormId(GetBaseId(), GetParent()->espmFiles);
-  } else
+  } else {
     res.formDesc = res.baseDesc = FormDesc(GetFormId(), "");
+  }
 
   return res;
 }
@@ -760,9 +800,9 @@ void MpObjectReference::ApplyChangeForm(const MpChangeForm& changeForm)
     std::terminate();
   }
 
-  pImpl->blockSaving = true;
-  Viet::ScopedTask<Impl> unblockTask(
-    [](Impl& impl) { impl.blockSaving = false; }, *pImpl);
+  blockSaving = true;
+  Viet::ScopedTask<MpObjectReference> unblockTask(
+    [](MpObjectReference& self) { self.blockSaving = false; }, *this);
 
   const auto currentBaseId = GetBaseId();
   const auto newBaseId = changeForm.baseDesc.ToFormId(GetParent()->espmFiles);
@@ -773,9 +813,9 @@ void MpObjectReference::ApplyChangeForm(const MpChangeForm& changeForm)
     throw std::runtime_error(ss.str());
   }
 
-  if (pImpl->ChangeForm().formDesc != changeForm.formDesc) {
+  if (ChangeForm().formDesc != changeForm.formDesc) {
     throw std::runtime_error("Expected formDesc to be " +
-                             pImpl->ChangeForm().formDesc.ToString() +
+                             ChangeForm().formDesc.ToString() +
                              ", but found " + changeForm.formDesc.ToString());
   }
 
@@ -788,14 +828,14 @@ void MpObjectReference::ApplyChangeForm(const MpChangeForm& changeForm)
     RegisterProfileId(changeForm.profileId);
 
   // See https://github.com/skyrim-multiplayer/issue-tracker/issues/42
-  pImpl->EditChangeForm(
+  EditChangeForm(
     [&](MpChangeFormREFR& f) {
       f = static_cast<const MpChangeFormREFR&>(changeForm);
 
       // Fix: RequestReloot doesn't work with non-zero 'nextRelootDatetime'
       f.nextRelootDatetime = 0;
     },
-    Impl::Mode::NoRequestSave);
+    Mode::NoRequestSave);
   if (changeForm.nextRelootDatetime) {
     auto tp =
       std::chrono::system_clock::from_time_t(changeForm.nextRelootDatetime);
@@ -815,7 +855,7 @@ void MpObjectReference::ApplyChangeForm(const MpChangeForm& changeForm)
 
 const DynamicFields& MpObjectReference::GetDynamicFields() const
 {
-  return pImpl->ChangeForm().dynamicFields;
+  return ChangeForm().dynamicFields;
 }
 
 void MpObjectReference::SetCellOrWorldObsolete(const FormDesc& newWorldOrCell)
@@ -826,7 +866,7 @@ void MpObjectReference::SetCellOrWorldObsolete(const FormDesc& newWorldOrCell)
   }
 
   auto worldOrCell =
-    pImpl->ChangeForm().worldOrCellDesc.ToFormId(worldState->espmFiles);
+    ChangeForm().worldOrCellDesc.ToFormId(worldState->espmFiles);
 
   everSubscribedOrListened = false;
   auto gridIterator = worldState->grids.find(worldOrCell);
@@ -834,7 +874,7 @@ void MpObjectReference::SetCellOrWorldObsolete(const FormDesc& newWorldOrCell)
     gridIterator->second.grid->Forget(this);
   }
 
-  pImpl->EditChangeForm([&](MpChangeFormREFR& changeForm) {
+  EditChangeForm([&](MpChangeFormREFR& changeForm) {
     changeForm.worldOrCellDesc = newWorldOrCell;
   });
 }
@@ -851,7 +891,7 @@ void MpObjectReference::VisitNeighbours(const Visitor& visitor)
   }
 
   auto worldOrCell =
-    pImpl->ChangeForm().worldOrCellDesc.ToFormId(worldState->espmFiles);
+    ChangeForm().worldOrCellDesc.ToFormId(worldState->espmFiles);
 
   auto gridIterator = worldState->grids.find(worldOrCell);
   if (gridIterator == worldState->grids.end()) {
@@ -887,16 +927,16 @@ void MpObjectReference::Init(WorldState* parent, uint32_t formId,
   // Not sure why. And not sure why this code actually been here.
   // It seems that MoveOnGrid will be caled later.
   /*if (!IsDisabled()) {
-    auto& gridInfo = GetParent()->grids[pImpl->ChangeForm().worldOrCell];
+    auto& gridInfo = GetParent()->grids[ChangeForm().worldOrCell];
     MoveOnGrid(*gridInfo.grid);
   }*/
 
   // We should queue created form for saving as soon as it is initialized
   const auto mode = (!hasChangeForm && formId >= 0xff000000)
-    ? Impl::Mode::RequestSave
-    : Impl::Mode::NoRequestSave;
+    ? Mode::RequestSave
+    : Mode::NoRequestSave;
 
-  pImpl->EditChangeForm(
+  EditChangeForm(
     [&](MpChangeFormREFR& changeForm) {
       changeForm.formDesc =
         FormDesc::FromFormId(formId, GetParent()->espmFiles);
@@ -906,7 +946,7 @@ void MpObjectReference::Init(WorldState* parent, uint32_t formId,
 
 bool MpObjectReference::IsLocationSavingNeeded() const
 {
-  auto last = pImpl->GetLastSaveRequestMoment();
+  auto last = GetLastSaveRequestMoment();
   return !last ||
     std::chrono::system_clock::now() - *last > std::chrono::seconds(30);
 }
@@ -948,7 +988,11 @@ void MpObjectReference::ProcessActivate(MpObjectReference& activationSource)
         resultItem = espm::GetMappedId(base.rec->GetId(), *mapping);
       }
 
-      activationSource.AddItem(resultItem, 1);
+      auto refrRecord = espm::Convert<espm::REFR>(
+        loader.GetBrowser().LookupById(GetFormId()).rec);
+      uint32_t count =
+        refrRecord ? refrRecord->GetData(compressedFieldsCache).count : 1;
+      activationSource.AddItem(resultItem, count ? count : 1);
       SetHarvested(true);
       RequestReloot();
     }
@@ -1220,13 +1264,14 @@ void MpObjectReference::AddContainerObject(
       espm.GetBrowser(), formLookupRes, 1, pcLevel, chanceNoneOverride.get());
     for (auto& p : map)
       (*itemsToAdd)[p.first] += p.second;
-  } else
+  } else {
     (*itemsToAdd)[entry.formId] += entry.count;
+  }
 }
 
 void MpObjectReference::EnsureBaseContainerAdded(espm::Loader& espm)
 {
-  if (pImpl->ChangeForm().baseContainerAdded)
+  if (ChangeForm().baseContainerAdded)
     return;
 
   auto worldState = GetParent();
@@ -1266,8 +1311,8 @@ void MpObjectReference::EnsureBaseContainerAdded(espm::Loader& espm)
     entries.push_back({ p.first, p.second });
   AddItems(entries);
 
-  if (!pImpl->ChangeForm().baseContainerAdded) {
-    pImpl->EditChangeForm([&](MpChangeFormREFR& changeForm) {
+  if (!ChangeForm().baseContainerAdded) {
+    EditChangeForm([&](MpChangeFormREFR& changeForm) {
       changeForm.baseContainerAdded = true;
     });
   }

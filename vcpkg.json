@@ -4,6 +4,7 @@
   "homepage": "https://skymp.io",
   "description": "Online mod for Skyrim SE.",
   "dependencies": [
+    "cmakerc",
     "chakracore",
     "nlohmann-json",
     "cpp-httplib",
@@ -14,6 +15,8 @@
     "slikenet",
     "mongo-cxx-driver",
     "simdjson",
+    "robin-hood-hashing",
+    "simpleini",
     {
       "name": "directxtk",
       "platform": "windows"
@@ -23,16 +26,35 @@
       "platform": "windows"
     },
     {
-      "name": "skse64",
-      "platform": "windows"
-    },
-    {
-      "name": "commonlibsse",
-      "platform": "windows"
-    },
-    {
       "name": "cef-prebuilt",
       "platform": "windows"
+    },
+    {
+      "name": "asio",
+      "platform": "windows"
     }
-  ]
+  ],
+  "features": {
+    "skyrim-se": {
+      "description": "Build platform for Skyrim Special Edition.",
+      "dependencies": [
+        {
+          "name": "commonlibse",
+          "platform": "windows"
+        }
+      ]
+    },
+    "skyrim-ae": {
+      "description": "Build platform for Skyrim Anniversary Edition.",
+      "dependencies": [
+        {
+          "name": "commonlibae",
+          "platform": "windows"
+        }
+      ]
+    },
+    "skyrim-vr": {
+      "description": "Build platform for Skyrim VR."
+    }
+  }
 }

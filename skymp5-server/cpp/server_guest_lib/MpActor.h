@@ -1,5 +1,6 @@
 #pragma once
 #include "Appearance.h"
+#include "GetBaseActorValues.h"
 #include "MpObjectReference.h"
 #include "Structures.h"
 #include <memory>
@@ -7,6 +8,7 @@
 #include <set>
 
 class WorldState;
+struct ActorValues;
 
 class MpActor : public MpObjectReference
 {
@@ -56,8 +58,11 @@ public:
     std::optional<Viet::Promise<VarValue>> promise = std::nullopt);
 
   void ResolveSnippet(uint32_t snippetIdx, VarValue v);
-  void SetPercentages(float healthPercentage, float magickaPercentage,
-                      float staminaPercentage, MpActor* aggressor = nullptr);
+  void SetPercentages(const ActorValues& actorValues,
+                      MpActor* aggressor = nullptr);
+  void NetSendChangeValues(const ActorValues& actorValues);
+  void NetSetPercentages(const ActorValues& actorValues,
+                         MpActor* aggressor = nullptr);
 
   std::chrono::steady_clock::time_point GetLastAttributesPercentagesUpdate();
   std::chrono::steady_clock::time_point GetLastHitTime();
@@ -82,9 +87,19 @@ public:
 
   void SetIsDead(bool isDead);
 
-private:
-  std::set<std::shared_ptr<DestroyEventSink>> destroyEventSinks;
+  void RestoreActorValue(espm::ActorValue av, float value);
+  void DamageActorValue(espm::ActorValue av, float value);
+  void SetActorValue(espm::ActorValue actorValue, float value);
 
+  BaseActorValues GetBaseValues();
+  BaseActorValues GetMaximumValues();
+
+  void DropItem(const uint32_t baseId, const Inventory::Entry& entry);
+  void SetIsBlockActive(bool isBlockActive);
+  bool IsBlockActive() const;
+  NiPoint3 GetViewDirection() const;
+
+private:
   struct Impl;
   std::shared_ptr<Impl> pImpl;
 
@@ -92,6 +107,9 @@ private:
   std::string GetDeathStateMsg(const LocationalData& position, bool isDead,
                                bool shouldTeleport);
   void MpApiDeath(MpActor* killer = nullptr);
+  void EatItem(uint32_t baseId, espm::Type t);
+
+  void ModifyActorValuePercentage(espm::ActorValue av, float percentageDelta);
 
 protected:
   void BeforeDestroy() override;

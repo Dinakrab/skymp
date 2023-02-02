@@ -1,18 +1,23 @@
 #include "TestUtils.hpp"
-#include <catch2/catch.hpp>
+#include <catch2/catch_all.hpp>
 
 #include "FindRecipe.h"
 #include "PacketParser.h"
 
-using Catch::Matchers::Contains;
+using Catch::Matchers::ContainsSubstring;
 
 PartOne& GetPartOne();
 
 TEST_CASE("CraftItem packet is parsed", "[Craft][espm]")
 {
-  class MyActionListener : public IActionListener
+  class MyActionListener : public ActionListener
   {
   public:
+    MyActionListener()
+      : ActionListener(GetPartOne())
+    {
+    }
+
     void OnCraftItem(const RawMessageData& rawMsgData_,
                      const Inventory& inputObjects_, uint32_t workbenchId_,
                      uint32_t resultObjectId_) override
@@ -73,7 +78,7 @@ TEST_CASE("Player is able to craft item", "[Craft][espm]")
   for (auto entry : requiredItemsForNails.entries)
     ac.AddItem(entry.baseId, entry.count);
 
-  IActionListener::RawMessageData msgData;
+  ActionListener::RawMessageData msgData;
   msgData.userId = 0;
 
   // Vanilla item
@@ -125,13 +130,13 @@ TEST_CASE(
 
   const uint32_t wrongResultObject = 0xd8d4e;
 
-  IActionListener::RawMessageData msgData;
+  ActionListener::RawMessageData msgData;
   msgData.userId = 0;
 
   REQUIRE_THROWS_WITH(p.GetActionListener().OnCraftItem(msgData, requiredItems,
                                                         workbenchId,
                                                         wrongResultObject),
-                      Contains("Recipe not found"));
+                      ContainsSubstring("Recipe not found"));
 }
 
 TEST_CASE("DLC Dragonborn recipes are working", "[Craft][espm]")

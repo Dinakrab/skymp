@@ -1,4 +1,4 @@
-#include <catch2/catch.hpp>
+#include <catch2/catch_all.hpp>
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
 #include <slikenet/BitStream.h>
@@ -17,6 +17,7 @@ MovementMessage MakeTestMovementMessage(RunMode runMode, bool hasLookAt)
     { 123, 0, 45 },    // rot
     270,               // direction
     0.5,               // healthPercentage
+    400,               // speed
     RunMode::Running,
     true,            // isInJumpState
     true,            // isSneaking

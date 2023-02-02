@@ -1,4 +1,5 @@
 #pragma once
+#include "ActorValues.h"
 #include "Appearance.h"
 #include "DynamicFields.h"
 #include "Equipment.h"
@@ -45,9 +46,7 @@ public:
   // "unexisting" equipment and equipment with zero entries are different
   // values in skymp due to poor design
   std::string appearanceDump, equipmentDump;
-  float healthPercentage = 1.0f;
-  float magickaPercentage = 1.0f;
-  float staminaPercentage = 1.0f;
+  ActorValues actorValues;
   LocationalData spawnPoint = { { 133857, -61130, 14662 },
                                 { 0.f, 0.f, 72.f },
                                 FormDesc::Tamriel() };
@@ -68,9 +67,8 @@ public:
       recType, formDesc, baseDesc, position.x, position.y, position.z, angle.x,
       angle.y, angle.z, worldOrCellDesc, inv.ToJson(), isHarvested, isOpen,
       baseContainerAdded, nextRelootDatetime, isDisabled, profileId,
-      isRaceMenuOpen, isDead, appearanceDump, equipmentDump, healthPercentage,
-      magickaPercentage, staminaPercentage, spawnPoint, dynamicFields,
-      spawnDelay);
+      isRaceMenuOpen, isDead, appearanceDump, equipmentDump,
+      actorValues.ToTuple(), spawnPoint, dynamicFields, spawnDelay);
   }
 
   static nlohmann::json ToJson(const MpChangeForm& changeForm);
@@ -90,13 +88,4 @@ inline bool operator!=(const MpChangeForm& lhs, const MpChangeForm& rhs)
 inline bool operator<(const MpChangeForm& lhs, const MpChangeForm& rhs)
 {
   return lhs.ToTuple() < rhs.ToTuple();
-}
-
-inline std::ostream& operator<<(std::ostream& os,
-                                const MpChangeForm& changeForm)
-{
-  return os << "{" << changeForm.formDesc.ToString() << ", "
-            << "[" << changeForm.position.x << ", " << changeForm.position.y
-            << ", " << changeForm.position.z << "] "
-            << "}";
 }

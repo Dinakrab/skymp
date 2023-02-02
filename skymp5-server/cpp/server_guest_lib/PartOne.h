@@ -1,4 +1,5 @@
 #pragma once
+#include "AnimationSystem.h"
 #include "GamemodeApi.h"
 #include "ISaveStorage.h"
 #include "MpActor.h"
@@ -17,8 +18,8 @@
 #include <unordered_map>
 
 using ProfileId = int32_t;
+class ActionListener;
 
-class IActionListener;
 struct HitData;
 
 class PartOne
@@ -44,7 +45,7 @@ public:
   bool IsConnected(Networking::UserId userId) const;
   void Tick();
   FormCallbacks CreateFormCallbacks();
-  IActionListener& GetActionListener();
+  ActionListener& GetActionListener();
   const std::vector<std::shared_ptr<Listener>>& GetListeners() const;
   std::vector<Message>& Messages();
 
@@ -77,6 +78,7 @@ public:
 
   WorldState worldState;
   ServerState serverState;
+  AnimationSystem animationSystem;
 
   Networking::ISendTarget& GetSendTarget() const;
 

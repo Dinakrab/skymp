@@ -104,10 +104,10 @@ const watchCallback = (_eventType, fileName) => {
         });
         ["libEGL.dll", "libGLESv2.dll"].forEach((item, i) => {
           cp(
-            path.join(cefDir, "Release/swiftshader", item),
+            path.join(cefDir, "Release", item),
             path.join(
               distDir,
-              "Data/Platform/Distribution/RuntimeDependencies/swiftshader"
+              "Data/Platform/Distribution/RuntimeDependencies"
             )
           );
         });
@@ -118,11 +118,9 @@ const watchCallback = (_eventType, fileName) => {
           );
         });
         [
-          "cef.pak",
-          "cef_100_percent.pak",
-          "cef_200_percent.pak",
-          "cef_extensions.pak",
-          "devtools_resources.pak",
+          "chrome_100_percent.pak",
+          "chrome_200_percent.pak",
+          "resources.pak",
         ].forEach((item, i) => {
           cp(
             path.join(cefDir, "Resources", item),
@@ -195,12 +193,17 @@ const watchCallback = (_eventType, fileName) => {
         path.join(bin, `_codegen/skyrimPlatform.ts`),
         path.join(distDir, "Data/Platform/Modules")
       );
+      cp(
+        path.join(bin, `_codegen/skyrimPlatform.ts`),
+        path.join(sourceDir, "src/platform_se/codegen/convert-files")
+      );
 
       if (!process.env.DEV_SERVICE_NO_GAME) {
         if (config.SkyrimSEFolder === "OFF" || config.SkyrimSEFolder === "") {
-          console.log(`It seems that you didn't specify SKYRIM_DIR CMake option. The game will not be restarted.`);
-        }
-        else {
+          console.log(
+            `It seems that you didn't specify SKYRIM_DIR CMake option. The game will not be restarted.`
+          );
+        } else {
           console.log(`Starting ${config.SkyrimSEFolder}`);
           game.launch(config.SkyrimSEFolder).catch((e) => console.error(e));
         }

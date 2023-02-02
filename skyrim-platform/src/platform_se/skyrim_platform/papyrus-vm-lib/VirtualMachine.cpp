@@ -1,6 +1,4 @@
 #include "VirtualMachine.h"
-#include <algorithm>
-#include <stdexcept>
 
 VirtualMachine::VirtualMachine(
   std::vector<std::shared_ptr<PexScript>> loadedScripts)
@@ -10,7 +8,7 @@ VirtualMachine::VirtualMachine(
 
 void VirtualMachine::RegisterFunction(std::string className,
                                       std::string functionName,
-                                      FunctionType type, NativeFunction fn)
+                                      FunctionType type, ::NativeFunction fn)
 {
 
   switch (type) {
@@ -85,9 +83,10 @@ VarValue VirtualMachine::CallMethod(ActivePexInstance* instance,
 
   if (methodName == nameGoToState || methodName == nameGetState) {
     function = instance->GetFunctionByName(methodName, "");
-  } else
+  } else {
     function =
       instance->GetFunctionByName(methodName, instance->GetActiveStateName());
+  }
 
   if (function.valid) {
     return instance->StartFunction(function, arguments);
@@ -109,7 +108,7 @@ VarValue VirtualMachine::CallStatic(std::string className,
     : nativeStaticFunctions[""][functionName];
 
   if (f) {
-    NativeFunction func = f;
+    ::NativeFunction func = f;
     result = func(VarValue::None(), arguments);
     return result;
   }

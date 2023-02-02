@@ -1,10 +1,10 @@
-import { Movement, Transform } from "./movement";
-import { Appearance } from "./appearance";
-import { Animation } from "./animation";
-import { Equipment } from "./equipment";
-import { Inventory } from "./inventory";
+import { Movement, Transform } from "./sync/movement";
+import { Appearance } from "./sync/appearance";
+import { Animation } from "./sync/animation";
+import { Equipment } from "./sync/equipment";
+import { Inventory } from "./sync/inventory";
 import * as spSnippet from "./spSnippet";
-import { ActorValues } from "./actorvalues";
+import { ActorValues } from "./sync/actorvalues";
 
 export enum MsgType {
   CustomPacket = 1,
@@ -25,6 +25,7 @@ export enum MsgType {
   ChangeValues = 16,
   OnHit = 17,
   DeathStateContainer = 18,
+  DropItem = 19,
 }
 
 export interface SetInventory {
@@ -48,6 +49,7 @@ export interface CreateActorMessage {
   type: "createActor";
   idx: number;
   refrId?: number;
+  baseRecordType: "DOOR" | undefined; // see PartOne.cpp
   transform: Transform;
   isMe: boolean;
   appearance?: Appearance;
@@ -89,6 +91,8 @@ export interface UpdateEquipmentMessage {
 export interface UpdatePropertyMessage {
   t: MsgType.UpdateProperty;
   idx: number;
+  refrId: number;
+  baseRecordType: string; // DOOR, ACTI, etc
   data: unknown;
   propName: string;
 }

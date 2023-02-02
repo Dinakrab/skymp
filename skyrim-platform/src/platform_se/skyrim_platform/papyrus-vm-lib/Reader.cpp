@@ -1,5 +1,4 @@
 #include "Reader.h"
-#include <fstream>
 
 void Reader::Read()
 {
@@ -382,18 +381,15 @@ ObjectTable::Object::PropInfo Reader::FillProperty()
 
   if ((prop.flags & 4) == prop.kFlags_AutoVar) { // it exists??
     prop.autoVarName = this->structure->stringTable.m_data[Read16_bit()];
-  } else
-    prop.autoVarName;
+  }
 
   if ((prop.flags & 5) == prop.kFlags_Read) {
     prop.readHandler = FillFuncInfo();
-  } else
-    prop.readHandler;
+  }
 
   if ((prop.flags & 6) == prop.kFlags_Write) {
     prop.writeHandler = FillFuncInfo();
-  } else
-    prop.writeHandler;
+  }
 
   return prop;
 }

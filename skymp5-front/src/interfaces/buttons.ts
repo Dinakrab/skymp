@@ -1,5 +1,5 @@
-import { ComponentProps, FormEvent } from "react";
-import { DefaultUIElementProps } from ".";
+import { ComponentProps, FormEvent } from 'react';
+import { DefaultUIElementProps } from '.';
 
 export interface SkyrimHintProps {
     isOpened: boolean;
@@ -8,7 +8,7 @@ export interface SkyrimHintProps {
     left: boolean;
 }
 
-export interface DefaultButtonComponentProps extends React.ComponentProps<"button">, DefaultUIElementProps {
+export interface DefaultButtonComponentProps extends React.ComponentProps<'button'>, DefaultUIElementProps {
     name: string;
 }
 
@@ -17,6 +17,14 @@ export interface ImageButtonProps extends DefaultButtonComponentProps {
 }
 
 export interface SkyrimButtonProps extends DefaultButtonComponentProps {
+    text: string
+}
+export interface SkyrimSliderProps extends DefaultButtonComponentProps {
+    setValue: (value: number) => void,
+    sliderValue: number,
+    marks: number[],
+    min: number,
+    max: number,
     text: string
 }
 

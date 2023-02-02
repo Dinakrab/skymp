@@ -1,8 +1,9 @@
 #include "TestUtils.hpp"
-#include <catch2/catch.hpp>
+#include <catch2/catch_all.hpp>
 #include <chrono>
 
 #include "GetBaseActorValues.h"
+#include "HitData.h"
 #include "Loader.h"
 #include "PacketParser.h"
 #include "formulas/TES5DamageFormula.h"
@@ -21,7 +22,7 @@ TEST_CASE("Formula takes weapon damage into account", "[TES5DamageFormula]")
 
   ac.SetEquipment(R"({"inv": {"entries": []}})");
 
-  IActionListener::RawMessageData rawMsgData;
+  ActionListener::RawMessageData rawMsgData;
   rawMsgData.userId = 0;
   HitData hitData;
   hitData.target = 0x14;
@@ -43,7 +44,7 @@ TEST_CASE("Damage is reduced based on target's armor", "[TES5DamageFormula]")
   p.SetUserActor(0, 0xff000000);
   auto& ac = p.worldState.GetFormAt<MpActor>(0xff000000);
 
-  IActionListener::RawMessageData rawMsgData;
+  ActionListener::RawMessageData rawMsgData;
   rawMsgData.userId = 0;
   HitData hitData;
   hitData.target = 0x14;
@@ -116,7 +117,7 @@ TEST_CASE("Formula is race-dependent for unarmed attack",
   auto& ac = p.worldState.GetFormAt<MpActor>(0xff000000);
   ac.SetEquipment(R"({"inv": {"entries": []}})");
 
-  IActionListener::RawMessageData rawMsgData;
+  ActionListener::RawMessageData rawMsgData;
   rawMsgData.userId = 0;
   HitData hitData;
   hitData.target = 0x14;
@@ -131,7 +132,7 @@ TEST_CASE("Formula is race-dependent for unarmed attack",
   Appearance appearance;
   appearance.raceId = 0x13745; // KhajiitRace
   ac.SetAppearance(&appearance);
-  ac.SetPercentages(1, 1, 1);
+  ac.SetPercentages({ 1, 1, 1 });
 
   {
     TES5DamageFormula formula{};

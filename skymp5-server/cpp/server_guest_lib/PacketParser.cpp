@@ -1,5 +1,7 @@
 #include "PacketParser.h"
+#include "AnimationData.h"
 #include "Exceptions.h"
+#include "HitData.h"
 #include "JsonUtils.h"
 #include "MovementMessage.h"
 #include "MovementMessageSerialization.h"
@@ -11,8 +13,6 @@
 namespace FormIdCasts {
 uint32_t LongToNormal(uint64_t longFormId)
 {
-  if (longFormId < 0x100000000)
-    return static_cast<uint32_t>(longFormId);
   return static_cast<uint32_t>(longFormId % 0x100000000);
 }
 }
@@ -42,13 +42,13 @@ PacketParser::PacketParser()
 void PacketParser::TransformPacketIntoAction(Networking::UserId userId,
                                              Networking::PacketData data,
                                              size_t length,
-                                             IActionListener& actionListener)
+                                             ActionListener& actionListener)
 {
   if (!length) {
     throw std::runtime_error("Zero-length message packets are not allowed");
   }
 
-  IActionListener::RawMessageData rawMsgData{
+  ActionListener::RawMessageData rawMsgData{
     data,
     length,
     /*parsed (json)*/ {},
@@ -124,7 +124,10 @@ void PacketParser::TransformPacketIntoAction(Networking::UserId userId,
     case MsgType::UpdateAnimation: {
       uint32_t idx;
       ReadEx(jMessage, JsonPointers::idx, &idx);
-      actionListener.OnUpdateAnimation(rawMsgData, idx);
+      simdjson::dom::element jData;
+      ReadEx(jMessage, JsonPointers::data, &jData);
+      actionListener.OnUpdateAnimation(rawMsgData, idx,
+                                       AnimationData::FromJson(jData));
     } break;
     case MsgType::UpdateAppearance: {
       uint32_t idx;
@@ -162,10 +165,12 @@ void PacketParser::TransformPacketIntoAction(Networking::UserId userId,
       uint32_t target;
       ReadEx(jMessage, JsonPointers::target, &target);
       auto e = Inventory::Entry::FromJson(jMessage);
-      if (type == MsgType::PutItem)
+      if (type == MsgType::PutItem) {
+        e.extra.worn = Inventory::Worn::None;
         actionListener.OnPutItem(rawMsgData, target, e);
-      else
+      } else {
         actionListener.OnTakeItem(rawMsgData, target, e);
+      }
     } break;
     case MsgType::FinishSpSnippet: {
       uint32_t snippetIdx;
@@ -246,19 +251,25 @@ void PacketParser::TransformPacketIntoAction(Networking::UserId userId,
     case MsgType::ChangeValues: {
       simdjson::dom::element data_;
       ReadEx(jMessage, JsonPointers::data, &data_);
-      // 0: healthPercentage, 1: magickaPercentage, 2: staminaPercentage
-      float percentage[3];
-      ReadEx(data_, JsonPointers::health, &percentage[0]);
-      ReadEx(data_, JsonPointers::magicka, &percentage[1]);
-      ReadEx(data_, JsonPointers::stamina, &percentage[2]);
-      actionListener.OnChangeValues(rawMsgData, percentage[0], percentage[1],
-                                    percentage[2]);
+      ActorValues actorValues;
+      ReadEx(data_, JsonPointers::health, &actorValues.healthPercentage);
+      ReadEx(data_, JsonPointers::magicka, &actorValues.magickaPercentage);
+      ReadEx(data_, JsonPointers::stamina, &actorValues.staminaPercentage);
+      actionListener.OnChangeValues(rawMsgData, actorValues);
       break;
     }
     case MsgType::OnHit: {
       simdjson::dom::element data_;
       ReadEx(jMessage, JsonPointers::data, &data_);
       actionListener.OnHit(rawMsgData, HitData::FromJson(data_));
+      break;
+    }
+    case MsgType::DropItem: {
+      uint64_t baseId;
+      ReadEx(jMessage, JsonPointers::baseId, &baseId);
+      auto entry = Inventory::Entry::FromJson(jMessage);
+      actionListener.OnDropItem(rawMsgData, FormIdCasts::LongToNormal(baseId),
+                                entry);
       break;
     }
     default:

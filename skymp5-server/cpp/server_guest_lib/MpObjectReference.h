@@ -1,4 +1,5 @@
 #pragma once
+#include "ChangeFormGuard.h"
 #include "FormIndex.h"
 #include "Grid.h"
 #include "IWorldObject.h"
@@ -36,7 +37,6 @@ struct GridPosInfo
 class MpActor;
 class WorldState;
 class OccupantDestroyEventSink;
-struct VarValue;
 class JsValue;
 
 class FormCallbacks;
@@ -53,6 +53,7 @@ class MpObjectReference
   : public MpForm
   , public FormIndex
   , public IWorldObject
+  , protected ChangeFormGuard
 {
   friend class OccupantDestroyEventSink;
 
@@ -69,6 +70,7 @@ public:
   const NiPoint3& GetAngle() const override;
   const FormDesc& GetCellOrWorld() const override;
   const uint32_t& GetBaseId() const;
+  const std::string& GetBaseType() const;
   const Inventory& GetInventory() const;
   const bool& IsHarvested() const;
   const bool& IsOpen() const;

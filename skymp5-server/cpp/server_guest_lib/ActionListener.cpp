@@ -1,15 +1,22 @@
 #include "ActionListener.h"
+#include "AnimationSystem.h"
+#include "ConsoleCommands.h"
 #include "CropRegeneration.h"
 #include "DummyMessageOutput.h"
 #include "EspmGameObject.h"
 #include "Exceptions.h"
 #include "FindRecipe.h"
 #include "GetBaseActorValues.h"
+#include "HitData.h"
 #include "MovementValidation.h"
+#include "MpObjectReference.h"
 #include "MsgType.h"
-#include "PapyrusObjectReference.h"
 #include "UserMessageOutput.h"
 #include "Utils.h"
+#include "WorldState.h"
+#include <fmt/format.h>
+#include <spdlog/spdlog.h>
+#include <unordered_set>
 
 MpActor* ActionListener::SendToNeighbours(
   uint32_t idx, const simdjson::dom::element& jMessage,
@@ -113,8 +120,14 @@ void ActionListener::OnUpdateMovement(const RawMessageData& rawMsgData,
 }
 
 void ActionListener::OnUpdateAnimation(const RawMessageData& rawMsgData,
-                                       uint32_t idx)
+                                       uint32_t idx,
+                                       const AnimationData& animationData)
 {
+  MpActor* actor = partOne.serverState.ActorByUser(rawMsgData.userId);
+  if (!actor) {
+    return;
+  }
+  partOne.animationSystem.Process(actor, animationData);
   SendToNeighbours(idx, rawMsgData);
 }
 
@@ -277,6 +290,17 @@ void ActionListener::OnTakeItem(const RawMessageData& rawMsgData,
   ref.TakeItem(*actor, entry);
 }
 
+void ActionListener::OnDropItem(const RawMessageData& rawMsgData,
+                                uint32_t baseId, const Inventory::Entry& entry)
+{
+  MpActor* ac = partOne.serverState.ActorByUser(rawMsgData.userId);
+  if (!ac) {
+    throw std::runtime_error(fmt::format(
+      "Unable to drop an item from user with id: {:x}.", rawMsgData.userId));
+  }
+  ac->DropItem(baseId, entry);
+}
+
 namespace {
 VarValue VarValueFromJson(const simdjson::dom::element& parentMsg,
                           const simdjson::dom::element& element)
@@ -353,9 +377,18 @@ void UseCraftRecipe(MpActor* me, espm::COBJ::Data recipeData,
     auto formId = espm::GetMappedId(entry.formId, *mapping);
     entries.push_back({ formId, entry.count });
   }
+  auto outputFormId =
+    espm::GetMappedId(recipeData.outputObjectFormId, *mapping);
+  if (spdlog::should_log(spdlog::level::debug)) {
+    std::string s = fmt::format("User formId={:#x} crafted", me->GetFormId());
+    for (const auto& entry : entries) {
+      s += fmt::format(" -{:#x} x{}", entry.baseId, entry.count);
+    }
+    s += fmt::format(" +{:#x} x{}", outputFormId, recipeData.outputCount);
+    spdlog::debug("{}", s);
+  }
   me->RemoveItems(entries);
-  me->AddItem(espm::GetMappedId(recipeData.outputObjectFormId, *mapping),
-              recipeData.outputCount);
+  me->AddItem(outputFormId, recipeData.outputCount);
 }
 
 void ActionListener::OnCraftItem(const RawMessageData& rawMsgData,
@@ -369,6 +402,9 @@ void ActionListener::OnCraftItem(const RawMessageData& rawMsgData,
   auto& cache = partOne.worldState.GetEspmCache();
   auto base = br.LookupById(workbench.GetBaseId());
 
+  spdlog::debug("User {} tries to craft {:#x} on workbench {:#x}",
+                rawMsgData.userId, resultObjectId, workbenchId);
+
   if (base.rec->GetType() != "FURN") {
     throw std::runtime_error("Unable to use " +
                              base.rec->GetType().ToString() + " as workbench");
@@ -378,7 +414,10 @@ void ActionListener::OnCraftItem(const RawMessageData& rawMsgData,
   auto recipeUsed = FindRecipe(br, inputObjects, resultObjectId, &espmIdx);
 
   if (!recipeUsed) {
-    throw std::runtime_error("Recipe not found");
+    throw std::runtime_error(
+      fmt::format("Recipe not found: inputObjects={}, workbenchId={:#x}, "
+                  "resultObjectId={:#x}",
+                  inputObjects.ToJson().dump(), workbenchId, resultObjectId));
   }
 
   MpActor* me = partOne.serverState.ActorByUser(rawMsgData.userId);
@@ -463,9 +502,7 @@ void ActionListener::OnCustomEvent(const RawMessageData& rawMsgData,
 }
 
 void ActionListener::OnChangeValues(const RawMessageData& rawMsgData,
-                                    const float healthPercentage,
-                                    const float magickaPercentage,
-                                    const float staminaPercentage)
+                                    const ActorValues& newActorValues)
 {
   MpActor* actor = partOne.serverState.ActorByUser(rawMsgData.userId);
   if (!actor) {
@@ -476,38 +513,35 @@ void ActionListener::OnChangeValues(const RawMessageData& rawMsgData,
   float timeAfterRegeneration = CropPeriodAfterLastRegen(
     actor->GetDurationOfAttributesPercentagesUpdate(now).count());
 
-  MpChangeForm changeForm = actor->GetChangeForm();
-  float health = healthPercentage;
-  float magicka = magickaPercentage;
-  float stamina = staminaPercentage;
+  ActorValues currentActorValues = actor->GetChangeForm().actorValues;
+  float health = newActorValues.healthPercentage;
+  float magicka = newActorValues.magickaPercentage;
+  float stamina = newActorValues.staminaPercentage;
 
-  if (healthPercentage != changeForm.healthPercentage) {
-    health = CropHealthRegeneration(health, timeAfterRegeneration, actor);
+  if (newActorValues.healthPercentage != currentActorValues.healthPercentage) {
+    currentActorValues.healthPercentage =
+      CropHealthRegeneration(health, timeAfterRegeneration, actor);
   }
-  if (magickaPercentage != changeForm.magickaPercentage) {
-    magicka = CropMagickaRegeneration(magicka, timeAfterRegeneration, actor);
+  if (newActorValues.magickaPercentage !=
+      currentActorValues.magickaPercentage) {
+    currentActorValues.magickaPercentage =
+      CropMagickaRegeneration(magicka, timeAfterRegeneration, actor);
   }
-  if (staminaPercentage != changeForm.staminaPercentage) {
-    stamina = CropStaminaRegeneration(stamina, timeAfterRegeneration, actor);
-  }
-
-  if (IsNearlyEqual(health, healthPercentage) == false ||
-      IsNearlyEqual(magicka, magickaPercentage) == false ||
-      IsNearlyEqual(stamina, staminaPercentage) == false) {
-    std::string s;
-    s += Networking::MinPacketId;
-    s += nlohmann::json{
-      { "t", MsgType::ChangeValues },
-      { "data",
-        { { "health", health },
-          { "magicka", magicka },
-          { "stamina", stamina } } }
-    }.dump();
-    actor->SendToUser(s.data(), s.size(), true);
+  if (newActorValues.staminaPercentage !=
+      currentActorValues.staminaPercentage) {
+    currentActorValues.staminaPercentage =
+      CropStaminaRegeneration(stamina, timeAfterRegeneration, actor);
   }
 
-  actor->SetPercentages(health, magicka, stamina);
-  actor->SetLastAttributesPercentagesUpdate(now);
+  if (!IsNearlyEqual(currentActorValues.healthPercentage,
+                     newActorValues.healthPercentage) ||
+      !IsNearlyEqual(currentActorValues.magickaPercentage,
+                     newActorValues.magickaPercentage) ||
+      !IsNearlyEqual(currentActorValues.staminaPercentage,
+                     newActorValues.staminaPercentage)) {
+    actor->NetSendChangeValues(currentActorValues);
+  }
+  actor->SetPercentages(currentActorValues);
 }
 
 namespace {
@@ -616,6 +650,20 @@ bool IsAvailableForNextAttack(const MpActor& actor, const HitData& hitData,
       "Cannot get weapon speed from source: {0:x}", hitData.source));
   }
 }
+
+bool ShouldBeBlocked(const MpActor& aggressor, const MpActor& target)
+{
+  NiPoint3 targetViewDirection = target.GetViewDirection();
+  NiPoint3 aggressorViewDirection = aggressor.GetViewDirection();
+  if (targetViewDirection * aggressorViewDirection >= 0) {
+    return false;
+  }
+  NiPoint3 aggressorDirection = aggressor.GetPos() - target.GetPos();
+  float angle =
+    std::acos((targetViewDirection * aggressorDirection) /
+              (targetViewDirection.Length() * aggressorDirection.Length()));
+  return angle < 1;
+}
 }
 
 void ActionListener::OnHit(const RawMessageData& rawMsgData_,
@@ -687,42 +735,32 @@ void ActionListener::OnHit(const RawMessageData& rawMsgData_,
     return;
   }
 
-  MpChangeForm targetForm = targetActor.GetChangeForm();
+  ActorValues currentActorValues = targetActor.GetChangeForm().actorValues;
 
-  float healthPercentage = targetForm.healthPercentage;
-  float magickaPercentage = targetForm.magickaPercentage;
-  float staminaPercentage = targetForm.staminaPercentage;
+  float healthPercentage = currentActorValues.healthPercentage;
+  float magickaPercentage = currentActorValues.magickaPercentage;
+  float staminaPercentage = currentActorValues.staminaPercentage;
 
+  hitData.isHitBlocked = targetActor.IsBlockActive()
+    ? ShouldBeBlocked(*aggressor, targetActor)
+    : false;
   float damage = partOne.CalculateDamage(*aggressor, targetActor, hitData);
   damage = damage < 0.f ? 0.f : damage;
-  float currentHealthPercentage =
+  currentActorValues.healthPercentage =
     CalculateCurrentHealthPercentage(targetActor, damage, healthPercentage);
 
-  currentHealthPercentage =
-    currentHealthPercentage < 0.f ? 0.f : currentHealthPercentage;
+  currentActorValues.healthPercentage =
+    currentActorValues.healthPercentage < 0.f
+    ? 0.f
+    : currentActorValues.healthPercentage;
 
-  targetActor.SetPercentages(currentHealthPercentage, magickaPercentage,
-                             staminaPercentage, aggressor);
-  auto now = std::chrono::steady_clock::now();
-  targetActor.SetLastAttributesPercentagesUpdate(now);
-  targetActor.SetLastHitTime(now);
+  targetActor.NetSetPercentages(currentActorValues, aggressor);
+  targetActor.SetLastHitTime();
 
-  targetForm = targetActor.GetChangeForm();
-
-  std::string s;
-  s += Networking::MinPacketId;
-  s += nlohmann::json{
-    { "t", MsgType::ChangeValues },
-    { "data",
-      { { "health", targetForm.healthPercentage },
-        { "magicka", targetForm.magickaPercentage },
-        { "stamina", targetForm.staminaPercentage } } }
-  }.dump();
-  targetActor.SendToUser(s.data(), s.size(), true);
   spdlog::debug("Target {0:x} is hitted by {1} damage. Current health "
                 "percentage: {2}. Last "
                 "health percentage: {3}. (Last: {3} => Current: {2})",
-                hitData.target, damage, currentHealthPercentage,
+                hitData.target, damage, currentActorValues.healthPercentage,
                 healthPercentage);
 }
 

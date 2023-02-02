@@ -4,9 +4,20 @@
 #include "MpActor.h"
 #include "MsgType.h"
 #include "PartOne.h"
-#include <catch2/catch.hpp>
+#include <catch2/catch_all.hpp>
 
 // Utilities for testing
+
+bool IsCmakeOptionSpecified(const std::string& optionValue)
+{
+  return !optionValue.empty() && optionValue != "OFF";
+}
+
+const char* GetDataDir()
+{
+  return IsCmakeOptionSpecified(UNIT_DATA_DIR) ? UNIT_DATA_DIR
+                                               : SKYRIM_DIR "/Data";
+}
 
 std::string MakeMessage(const nlohmann::json& j)
 {
